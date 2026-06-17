@@ -206,19 +206,29 @@ async def process_calculate_items(callback: types.CallbackQuery):
     selection = users_db.get(user_id, {s: None for s in SLOTS})
     
     totals = {"Атака": 0, "Захист": 0, "Сила": 0, "Спритність": 0, "Інтуїція": 0, "Витривалість": 0, "Ухилення": 0, "Точність": 0, "Крит": 0, "Опір криту": 0}
+    
+    # Флаг для контролю атаки ТІЛЬКИ від однієї зброї
     weapon_attack_counted = False
     
     for slot, item_name in selection.items():
         if item_name:
-            cat = "Зброя" if item_name in DATABASE.get("Зброя", {}) else ("Щит" if item_name in DATABASE.get("Щит", {}) else slot)
+            if slot == "Права рука":
+                cat = "Зброя"
+            elif slot == "Ліва рука":
+                cat = "Зброя" if item_name in DATABASE.get("Зброя", {}) else "Щит"
+            else:
+                cat = slot
+                
             is_weapon = (cat == "Зброя")
+                
             for stat, val in DATABASE.get(cat, {}).get(item_name, {}).items():
                 if stat in totals: 
+                    # Якщо це зброя і параметр "Атака" - додаємо тільки 1 раз
                     if is_weapon and stat == "Атака":
-                        if weapon_attack_counted: continue
-                        else:
+                        if not weapon_attack_counted:
                             totals[stat] += val
                             weapon_attack_counted = True
+                    # Всі інші стати (або атака з рукавиць) додаються завжди
                     else:
                         totals[stat] += val
     
@@ -281,15 +291,22 @@ async def process_stats_input(message: types.Message, state: FSMContext):
     
     if mode == "mixed":
         weapon_attack_counted = False
+        
         for slot, item_name in selection.items():
             if item_name:
-                cat = "Зброя" if item_name in DATABASE.get("Зброя", {}) else ("Щит" if item_name in DATABASE.get("Щит", {}) else slot)
+                if slot == "Права рука":
+                    cat = "Зброя"
+                elif slot == "Ліва рука":
+                    cat = "Зброя" if item_name in DATABASE.get("Зброя", {}) else "Щит"
+                else:
+                    cat = slot
+                    
                 is_weapon = (cat == "Зброя")
+                    
                 for stat, val in DATABASE.get(cat, {}).get(item_name, {}).items():
                     if stat in totals:
                         if is_weapon and stat == "Атака":
-                            if weapon_attack_counted: continue
-                            else:
+                            if not weapon_attack_counted:
                                 totals[stat] += val
                                 weapon_attack_counted = True
                         else:
@@ -307,20 +324,16 @@ async def handle(request):
     return web.Response(text="Bot is running smoothly 24/7!")
 
 async def main():
-    # Запускаємо веб-сервер
     app = web.Application()
     app.router.add_get('/', handle)
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Render сам видає порт через змінну PORT, або використовуємо 10000 за замовчуванням
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
 
     print("Сервер і бот успішно запущені!")
-    
-    # Запускаємо нашого Телеграм-бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
