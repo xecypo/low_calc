@@ -1,4 +1,6 @@
 import asyncio
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -72,7 +74,6 @@ SLOTS = ["Права рука", "Ліва рука", "Шолом", "Обладу
 
 users_db = {}
 
-# --- FSM СТАН ДЛЯ ОЧІКУВАННЯ ТЕКСТУ ---
 class CalcStates(StatesGroup):
     waiting_for_stats = State()
 
@@ -84,13 +85,11 @@ def get_formatted_output(totals):
         "Точність": "🎯", "Крит": "🩸", "Опір криту": "🔰", "Здоров'я": "❤️"
     }
 
-    # 1. Зчитуємо загальні базові статти (база користувача + предмети)
     сила = totals.get("Сила", 0)
     спритність = totals.get("Спритність", 0)
     інтуїція = totals.get("Інтуїція", 0)
     витривалість = totals.get("Витривалість", 0)
     
-    # 2. Зчитуємо бойові параметри, які ВЖЕ безпосередньо дали предмети
     атака_з_речей = totals.get("Атака", 0)
     захист_з_речей = totals.get("Захист", 0)
     крит_з_речей = totals.get("Крит", 0)
@@ -98,7 +97,6 @@ def get_formatted_output(totals):
     опір_криту_з_речей = totals.get("Опір криту", 0)
     точність_з_речей = totals.get("Точність", 0)
 
-    # 3. Рахуємо: Формула (від загальних статів) + Бонус від речей
     totals["Мінімальна атака"] = round(сила * 1 + атака_з_речей, 1)
     totals["Максимальна атака"] = round(сила * 2 + атака_з_речей, 1)
     totals["Захист"] = round(захист_з_речей * 1, 1)
@@ -107,7 +105,6 @@ def get_formatted_output(totals):
     totals["Опір криту"] = round(витривалість * 0.1 + інтуїція * 0.5 + опір_криту_з_речей, 1)
     totals["Точність"] = round(спритність * 0.3 + точність_з_речей, 1)
     
-    # --- Формування тексту ---
     res = "<b>--- ХАРАКТЕРИСТИКИ ---</b>\n"
     for stat in ["Сила", "Спритність", "Інтуїція", "Витривалість"]:
         val = totals.get(stat, 0)
@@ -133,26 +130,22 @@ def main_menu_keyboard(user_id):
     builder = InlineKeyboardBuilder()
     selection = users_db.get(user_id, {s: None for s in SLOTS})
     
-    # Кнопки з предметами
     for i, slot in enumerate(SLOTS):
         item = selection.get(slot)
         text = f"{slot}: {item}" if item else f"{slot}: Не обрано"
         builder.button(text=text, callback_data=f"slot_{i}")
     
-    # Кнопки режимів
     builder.button(text="✅ РОЗРАХУНОК: ПО ПРЕДМЕТАХ", callback_data="calc_items")
     builder.button(text="🔢 РОЗРАХУНОК: ВРУЧНУ (Тільки база)", callback_data="calc_manual")
     builder.button(text="⚖️ РОЗРАХУНОК: ЗМІШАНИЙ (База + Предмети)", callback_data="calc_mixed")
+    builder.button(text="💳 Допомогти розробнику", url="https://send.monobank.ua/jar/8xP2vZiaR5")
     
-    # КНОПКА ДОНАТУ
-    builder.button(text="💳 Допомогти розробнику калькулятора закрити кредит", url="https://send.monobank.ua/jar/8xP2vZiaR5")
-    
-    builder.adjust(1) # Всі кнопки йтимуть в один стовпчик одна під одною
+    builder.adjust(1)
     return builder.as_markup()
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear() # Очищуємо стан, якщо юзер був у процесі вводу
+    await state.clear()
     user_id = message.from_user.id
     if user_id not in users_db:
         users_db[user_id] = {s: None for s in SLOTS}
@@ -207,7 +200,6 @@ async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Меню екіпірування:", reply_markup=main_menu_keyboard(user_id))
     await callback.answer()
 
-# --- РЕЖИМ 1: ТІЛЬКИ ПРЕДМЕТИ ---
 @dp.callback_query(F.data == "calc_items")
 async def process_calculate_items(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -236,7 +228,6 @@ async def process_calculate_items(callback: types.CallbackQuery):
     await callback.message.answer(f"<b>📊 РЕЗУЛЬТАТ (Тільки предмети):</b>\n\n{result_text}", parse_mode="HTML")
     await callback.answer()
 
-# --- ПІДГОТОВКА ДО РЕЖИМІВ 2 ТА 3 ---
 @dp.callback_query(F.data.in_(["calc_manual", "calc_mixed"]))
 async def process_start_input(callback: types.CallbackQuery, state: FSMContext):
     mode = "manual" if callback.data == "calc_manual" else "mixed"
@@ -259,7 +250,6 @@ async def process_start_input(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(CalcStates.waiting_for_stats)
     await callback.answer()
 
-# --- ОТРИМАННЯ ТЕКСТУ ТА РОЗРАХУНОК (Режими 2 та 3) ---
 @dp.message(CalcStates.waiting_for_stats)
 async def process_stats_input(message: types.Message, state: FSMContext):
     try:
@@ -312,8 +302,25 @@ async def process_stats_input(message: types.Message, state: FSMContext):
     await message.answer(f"<b>📊 РЕЗУЛЬТАТ: {title}</b>\n\n{result_text}", parse_mode="HTML")
     await state.clear()
 
+# --- DUMMY WEB SERVER ДЛЯ RENDER ---
+async def handle(request):
+    return web.Response(text="Bot is running smoothly 24/7!")
+
 async def main():
-    print("Бот успішно запущено! Перейдіть у Telegram та напишіть йому /start")
+    # Запускаємо веб-сервер
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render сам видає порт через змінну PORT, або використовуємо 10000 за замовчуванням
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+
+    print("Сервер і бот успішно запущені!")
+    
+    # Запускаємо нашого Телеграм-бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
